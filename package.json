@@ -1,0 +1,13 @@
+{
+  "name": "blockchain-notes-web",
+  "version": "1.0.0",
+  "description": "Blockchain Notes App - Full Stack",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  }
+}
