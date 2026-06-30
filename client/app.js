@@ -9,119 +9,110 @@ async function loadChain() {
   const data = await res.json();
   currentChain = data.chain;
 
-  renderNoteList(currentChain);
-  updateChainPill(data.isValid);
+  renderNoteNav(currentChain);
+  updateChainBadge(data.isValid);
 
   if (selectedIndex !== null && currentChain[selectedIndex]) {
     renderNoteView(currentChain[selectedIndex]);
   }
 }
 
-// ── Sidebar note list ─────────────────────────────────────────────────────────
-function renderNoteList(chain) {
-  const list = document.getElementById("noteList");
-  list.innerHTML = "";
+// ── Sidebar note list ──────────────────────────────────────────────────────────
+function renderNoteNav(chain) {
+  const nav = document.getElementById("noteNav");
+  nav.innerHTML = "";
 
   // Skip genesis block (index 0) — show only real notes
   const notes = chain.filter(b => b.index > 0);
 
   if (notes.length === 0) {
-    list.innerHTML = `<p class="empty-msg">No notes yet. Write one below!</p>`;
+    nav.innerHTML = `<p class="nav-empty">No notes yet — write one below.</p>`;
     return;
   }
 
-  // Show newest first
+  // Newest first
   [...notes].reverse().forEach((block) => {
     const item = document.createElement("div");
-    item.className = `note-item ${block.status.toLowerCase()}${block.index === selectedIndex ? " selected" : ""}`;
-    item.id        = `note-item-${block.index}`;
+    item.className = `nav-item ${block.status.toLowerCase()}${block.index === selectedIndex ? " active" : ""}`;
+    item.id        = `nav-item-${block.index}`;
     item.onclick   = () => selectNote(block.index);
 
-    const titleText = block.note.length > 32
-      ? block.note.substring(0, 29) + "..."
+    const titleText = block.note.length > 28
+      ? block.note.substring(0, 25) + "..."
       : block.note;
 
-    const tamperDot = block.status === "TAMPERED"
-      ? `<span class="tamper-dot"></span>`
-      : "";
-
     item.innerHTML = `
-      <div class="note-item-title">${titleText}</div>
-      <div class="note-item-meta">
-        ${tamperDot}
-        <span>${block.timestamp}</span>
-      </div>
+      <span class="nav-item-title">${titleText}</span>
+      <span class="nav-item-time">${block.timestamp}</span>
     `;
 
-    list.appendChild(item);
+    nav.appendChild(item);
   });
 }
 
-// ── Select and view a note ────────────────────────────────────────────────────
+// ── Select and render a note ───────────────────────────────────────────────────
 function selectNote(index) {
   selectedIndex = index;
 
-  document.querySelectorAll(".note-item").forEach(el => el.classList.remove("selected"));
-  const item = document.getElementById(`note-item-${index}`);
-  if (item) item.classList.add("selected");
+  document.querySelectorAll(".nav-item").forEach(el => el.classList.remove("active"));
+  const item = document.getElementById(`nav-item-${index}`);
+  if (item) item.classList.add("active");
 
   const block = currentChain[index];
   if (block) renderNoteView(block);
 }
 
 function renderNoteView(block) {
-  document.getElementById("emptyState").style.display = "none";
-  document.getElementById("noteView").style.display   = "flex";
+  document.getElementById("splash").style.display   = "none";
+  document.getElementById("noteView").style.display = "flex";
 
   const isTampered = block.status === "TAMPERED";
 
-  // Meta
-  document.getElementById("noteMeta").innerHTML = `
-    <span class="note-index">Note #${block.index}</span><br/>
-    ${block.timestamp}
-  `;
+  // Timestamp + status pill
+  document.getElementById("noteTimestamp").textContent = block.timestamp;
 
-  // Note body
-  document.getElementById("noteBody").textContent = block.note;
+  const pill = document.getElementById("noteStatusPill");
+  pill.textContent = isTampered ? "Tampered" : "Valid";
+  pill.className   = `status-pill ${isTampered ? "tampered" : "valid"}`;
 
-  // Action buttons — only show for non-genesis
-  document.getElementById("tamperBtn").style.display  = "inline-flex";
-  document.getElementById("restoreBtn").style.display = isTampered ? "inline-flex" : "none";
+  // Note content
+  document.getElementById("noteContent").textContent = block.note;
 
-  // Blockchain info grid
-  const isHashMismatch = isTampered;
-  document.getElementById("chainGrid").innerHTML = `
-    <div class="chain-field">
-      <label>Block Index</label>
-      <value>#${block.index}</value>
+  // Action buttons
+  const actions = document.getElementById("noteActions");
+  actions.innerHTML = isTampered
+    ? `<button class="action-btn success" onclick="restoreBlock()">Restore</button>`
+    : `<button class="action-btn danger" onclick="openTamperModal()">Tamper</button>`;
+
+  // Metadata drawer
+  document.getElementById("metaGrid").innerHTML = `
+    <div class="meta-field">
+      <span class="meta-label">Block</span>
+      <span class="meta-value">#${block.index}</span>
     </div>
-    <div class="chain-field">
-      <label>Status</label>
-      <value class="${isTampered ? "tampered-hash" : ""}">${block.status === "Valid" ? "✔ Valid" : block.status === "TAMPERED" ? "✘ Tampered" : "◆ Genesis"}</value>
+    <div class="meta-field">
+      <span class="meta-label">Status</span>
+      <span class="meta-value ${isTampered ? "flagged" : ""}">${isTampered ? "Tampered" : "Valid"}</span>
     </div>
-    <div class="chain-field full">
-      <label>Timestamp</label>
-      <value>${block.timestamp}</value>
+    <div class="meta-field wide">
+      <span class="meta-label">Previous hash</span>
+      <span class="meta-value">${block.previousHash}</span>
     </div>
-    <div class="chain-field full">
-      <label>Previous Hash</label>
-      <value>${block.previousHash}</value>
-    </div>
-    <div class="chain-field full">
-      <label>Hash ${isTampered ? "(⚠ mismatch detected)" : ""}</label>
-      <value class="${isTampered ? "tampered-hash" : ""}">${block.hash}</value>
+    <div class="meta-field wide">
+      <span class="meta-label">Hash${isTampered ? " — mismatch detected" : ""}</span>
+      <span class="meta-value ${isTampered ? "flagged" : ""}">${block.hash}</span>
     </div>
   `;
 }
 
-// ── Update sidebar chain pill ─────────────────────────────────────────────────
-function updateChainPill(isValid) {
-  const pill = document.getElementById("chainPill");
-  pill.textContent = isValid ? "● Secured" : "● Compromised";
-  pill.className   = `chain-pill ${isValid ? "valid" : "tampered"}`;
+// ── Header chain badge ──────────────────────────────────────────────────────────
+function updateChainBadge(isValid) {
+  const badge = document.getElementById("chainBadge");
+  badge.textContent = isValid ? "Secured" : "Compromised";
+  badge.className   = `chain-badge ${isValid ? "secured" : "compromised"}`;
 }
 
-// ── Add a note ────────────────────────────────────────────────────────────────
+// ── Add a note ───────────────────────────────────────────────────────────────────
 async function addNote() {
   const input = document.getElementById("noteInput");
   const note  = input.value.trim();
@@ -142,21 +133,22 @@ async function addNote() {
   }
 }
 
-// ── Focus compose area (New Note button) ──────────────────────────────────────
 function focusCompose() {
-  document.getElementById("noteInput").focus();
+  const input = document.getElementById("noteInput");
+  input.scrollIntoView({ behavior: "smooth", block: "center" });
+  input.focus();
 }
 
-// ── Tamper modal ──────────────────────────────────────────────────────────────
+// ── Tamper modal ───────────────────────────────────────────────────────────────────
 function openTamperModal() {
   if (selectedIndex === null || selectedIndex === 0) return;
-  document.getElementById("modalBlockIndex").textContent = selectedIndex;
-  document.getElementById("tamperInput").value           = "[TAMPERED DATA]";
-  document.getElementById("modalOverlay").style.display  = "flex";
+  document.getElementById("modalIdx").textContent     = selectedIndex;
+  document.getElementById("tamperInput").value         = "[TAMPERED DATA]";
+  document.getElementById("overlay").style.display     = "flex";
 }
 
 function closeModal() {
-  document.getElementById("modalOverlay").style.display = "none";
+  document.getElementById("overlay").style.display = "none";
 }
 
 async function confirmTamper() {
@@ -173,7 +165,7 @@ async function confirmTamper() {
   await loadChain();
 }
 
-// ── Restore block ─────────────────────────────────────────────────────────────
+// ── Restore block ─────────────────────────────────────────────────────────────────
 async function restoreBlock() {
   if (selectedIndex === null || selectedIndex === 0) return;
 
@@ -186,22 +178,22 @@ async function restoreBlock() {
   await loadChain();
 }
 
-// ── Blockchain accordion toggle ───────────────────────────────────────────────
-function toggleAccordion() {
-  const body  = document.getElementById("accordionBody");
-  const arrow = document.getElementById("accordionArrow");
-  const open  = body.style.display === "none";
-  body.style.display  = open ? "block" : "none";
-  arrow.textContent   = open ? "▾" : "▸";
+// ── Metadata drawer toggle ───────────────────────────────────────────────────────
+function toggleDrawer() {
+  const body  = document.getElementById("drawerBody");
+  const caret = document.getElementById("drawerCaret");
+  const open  = body.style.display === "none" || body.style.display === "";
+  body.style.display = open ? "block" : "none";
+  caret.classList.toggle("open", open);
 }
 
-// ── Auto-resize textarea ──────────────────────────────────────────────────────
+// ── Auto-resize textarea ─────────────────────────────────────────────────────────
 function autoResize(el) {
   el.style.height = "auto";
   el.style.height = el.scrollHeight + "px";
 }
 
-// ── Enter to save (Shift+Enter for new line) ──────────────────────────────────
+// ── Enter to save (Shift+Enter for new line) ─────────────────────────────────────
 document.getElementById("noteInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -209,5 +201,6 @@ document.getElementById("noteInput").addEventListener("keydown", (e) => {
   }
 });
 
-// ── Initial load ──────────────────────────────────────────────────────────────
+// ── Initial state ─────────────────────────────────────────────────────────────────
+document.getElementById("drawerBody").style.display = "none";
 loadChain();
