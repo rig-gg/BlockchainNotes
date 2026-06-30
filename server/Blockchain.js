@@ -1,67 +1,108 @@
-const Block = require("./Block");
+const Block    = require("./Block");
+const supabase = require("./supabaseClient");
 
 class Blockchain {
-  constructor() {
-    this.chain = [new Block(0, "Genesis Block", "0000000000000000")];
+
+  // Loads the full chain from Supabase, ordered by index
+  async loadChain() {
+    const { data, error } = await supabase
+      .from("blocks")
+      .select("*")
+      .order("index", { ascending: true });
+
+    if (error) throw error;
+
+    // If empty, create the genesis block
+    if (!data || data.length === 0) {
+      const genesis = new Block(0, "Genesis Block", "0000000000000000");
+      await supabase.from("blocks").insert(genesis.toRow());
+      return [genesis];
+    }
+
+    return data.map(Block.fromRow);
   }
 
-  getLastBlock() {
-    return this.chain[this.chain.length - 1];
-  }
+  async addNote(note) {
+    const chain = await this.loadChain();
+    const last  = chain[chain.length - 1];
+    const block = new Block(chain.length, note, last.hash);
 
-  addNote(note) {
-    const last  = this.getLastBlock();
-    const block = new Block(this.chain.length, note, last.hash);
-    this.chain.push(block);
+    const { error } = await supabase.from("blocks").insert(block.toRow());
+    if (error) throw error;
+
     return block;
   }
 
   // Changes note WITHOUT recalculating hash — makes it detectable
-  tamperBlock(index, newNote) {
-    if (index <= 0 || index >= this.chain.length) return false;
-    this.chain[index].note = newNote;
+  async tamperBlock(index, newNote) {
+    const chain = await this.loadChain();
+    if (index <= 0 || index >= chain.length) return false;
+
+    const { error } = await supabase
+      .from("blocks")
+      .update({ note: newNote })
+      .eq("index", index);
+
+    if (error) throw error;
     return true;
   }
 
   // Fixes the tampered block then cascades down to relink all blocks after it
-  restoreBlock(index) {
-    if (index <= 0 || index >= this.chain.length) return false;
+  async restoreBlock(index) {
+    const chain = await this.loadChain();
+    if (index <= 0 || index >= chain.length) return false;
 
-    const target      = this.chain[index];
-    target.previousHash = this.chain[index - 1].hash;
+    const target      = chain[index];
+    target.previousHash = chain[index - 1].hash;
     target.hash         = target.calculateHash();
 
-    for (let i = index + 1; i < this.chain.length; i++) {
-      const current  = this.chain[i];
-      const previous = this.chain[i - 1];
+    await supabase
+      .from("blocks")
+      .update({ previous_hash: target.previousHash, hash: target.hash })
+      .eq("index", index);
+
+    for (let i = index + 1; i < chain.length; i++) {
+      const current  = chain[i];
+      const previous = chain[i - 1];
       current.previousHash = previous.hash;
       current.hash         = current.calculateHash();
+
+      await supabase
+        .from("blocks")
+        .update({ previous_hash: current.previousHash, hash: current.hash })
+        .eq("index", current.index);
     }
 
     return true;
   }
 
-  getStatus(index) {
+  getStatus(chain, index) {
     if (index === 0) return "Genesis";
-    const b    = this.chain[index];
-    const prev = this.chain[index - 1];
+    const b    = chain[index];
+    const prev = chain[index - 1];
     return b.isValid(prev.hash) ? "Valid" : "TAMPERED";
   }
 
-  isChainValid() {
-    for (let i = 1; i < this.chain.length; i++) {
-      if (!this.chain[i].isValid(this.chain[i - 1].hash)) return false;
+  isChainValid(chain) {
+    for (let i = 1; i < chain.length; i++) {
+      if (!chain[i].isValid(chain[i - 1].hash)) return false;
     }
     return true;
   }
 
   // Returns full chain with status attached to each block
-  getChainWithStatus() {
-    return this.chain.map((block, i) => ({
+  async getChainWithStatus() {
+    const chain = await this.loadChain();
+    return chain.map((block, i) => ({
       ...block,
-      status:    this.getStatus(i),
+      status:    this.getStatus(chain, i),
       shortHash: block.shortHash(),
     }));
+  }
+
+  async checkIsValid() {
+    const chain = await this.loadChain();
+    return this.isChainValid(chain);
   }
 }
 
