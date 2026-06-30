@@ -1,5 +1,10 @@
+# Java / IntelliJ (old project files, harmless to keep ignoring)
 *.class
 out/
 target/
 .idea/
 *.iml
+
+# Node
+node_modules/
+.env
