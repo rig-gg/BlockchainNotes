@@ -5,7 +5,7 @@ class Block {
     this.index        = index;
     this.note         = note;
     this.previousHash = previousHash;
-    this.timestamp    = timestamp || new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
+    this.timestamp    = timestamp;
     this.hash         = this.calculateHash();
   }
 

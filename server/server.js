@@ -56,7 +56,24 @@ app.post("/api/tamper", async (req, res) => {
   }
 });
 
-// ── POST /api/restore ─────────────────────────────────────────────────────────
+// ── GET /api/randomword ───────────────────────────────────────────────────────
+// Proxies the random word API so the browser doesn't call it directly
+app.get("/api/randomword", async (req, res) => {
+  try {
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), 8000);
+    const response   = await fetch("https://random-word-api.herokuapp.com/word?number=3&diff=1", {
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    const words = await response.json();
+    console.log("Random words fetched:", words);
+    res.json({ words, source: "api" });
+  } catch (err) {
+    console.error("Random word API error:", err.message);
+    res.status(503).json({ error: err.message });
+  }
+});
 app.post("/api/restore", async (req, res) => {
   try {
     const { index } = req.body;

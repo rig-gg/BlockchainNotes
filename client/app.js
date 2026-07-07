@@ -133,6 +133,28 @@ async function addNote() {
   }
 }
 
+// Generate random note from backend proxy @ RandomWordAPI
+async function generateNote() {
+  const btn   = document.getElementById("generateBtn");
+  const input = document.getElementById("noteInput");
+
+  btn.textContent = "Generating...";
+  btn.disabled    = true;
+
+  try {
+    const res   = await fetch(`${API}/randomword`);
+    const data = await res.json();
+    input.value = data.words.join(" ");
+    autoResize(input);
+    input.focus();
+  } catch (err) {
+    input.value = "Could not fetch random words. Try again.";
+  } finally {
+    btn.textContent = "Generate";
+    btn.disabled    = false;
+  }
+}
+
 function focusCompose() {
   const input = document.getElementById("noteInput");
   input.scrollIntoView({ behavior: "smooth", block: "center" });

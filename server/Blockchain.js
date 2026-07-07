@@ -1,6 +1,20 @@
 const Block    = require("./Block");
 const supabase = require("./supabaseClient");
 
+async function fetchTimestamp() {
+  try {
+    const res  = await fetch("https://timeapi.io/api/time/current/zone?timeZone=Asia/Manila");
+    const data = await res.json();
+    // Returns e.g. "2026-06-30 10:08:34.123456"
+    const dt   = new Date(data.dateTime);
+    return dt.toLocaleString("en-PH", { timeZone: "Asia/Manila" });
+  } catch (err) {
+    // Fallback to local time if the API is unreachable
+    console.warn("Time API unavailable, using local time.");
+    return new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
+  }
+}
+
 class Blockchain {
 
   // Loads the full chain from Supabase, ordered by index
