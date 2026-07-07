@@ -1,24 +1,62 @@
 const Block    = require("./Block");
 const supabase = require("./supabaseClient");
 
+// ── Fetch verified timestamp from external Time API ───────────────────────────
 async function fetchTimestamp() {
   try {
-    const res  = await fetch("https://timeapi.io/api/time/current/zone?timeZone=Asia/Manila");
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), 5000);
+    const res        = await fetch("https://timeapi.io/api/Time/current/zone?timeZone=Asia/Manila", {
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
     const data = await res.json();
-    // Returns e.g. "2026-06-30 10:08:34.123456"
-    const dt   = new Date(data.dateTime);
+    // Response: { dateTime: "2026-06-30T10:12:38.123", date: "06/30/2026", time: "10:12", ... }
+    if (!data || !data.dateTime) throw new Error("No dateTime in response");
+    const dt = new Date(data.dateTime);
+    if (isNaN(dt.getTime())) throw new Error("Invalid date from API");
     return dt.toLocaleString("en-PH", { timeZone: "Asia/Manila" });
   } catch (err) {
-    // Fallback to local time if the API is unreachable
-    console.warn("Time API unavailable, using local time.");
+    console.warn("TimeAPI unavailable, using local time:", err.message);
     return new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" });
   }
 }
 
+// ── In-memory fallback chain ───────────────────────────────────────────────────
+let memoryChain = null;
+
+async function getMemoryChain() {
+  if (!memoryChain) {
+    const timestamp = await fetchTimestamp();
+    memoryChain = [new Block(0, "Genesis Block", "0000000000000000", timestamp)];
+  }
+  return memoryChain;
+}
+
+// ── Check if Supabase is reachable ─────────────────────────────────────────────
+let supabaseAvailable = null; // null = not tested yet
+
+async function checkSupabase() {
+  if (supabaseAvailable !== null) return supabaseAvailable;
+  try {
+    const { error } = await supabase.from("blocks").select("index").limit(1);
+    supabaseAvailable = !error;
+  } catch {
+    supabaseAvailable = false;
+  }
+  if (!supabaseAvailable) {
+    console.warn("⚠  Supabase unreachable — running in memory mode.");
+  } else {
+    console.log("✔  Supabase connected.");
+  }
+  return supabaseAvailable;
+}
+
 class Blockchain {
 
-  // Loads the full chain from Supabase, ordered by index
   async loadChain() {
+    if (!(await checkSupabase())) return getMemoryChain();
+
     const { data, error } = await supabase
       .from("blocks")
       .select("*")
@@ -26,9 +64,9 @@ class Blockchain {
 
     if (error) throw error;
 
-    // If empty, create the genesis block
     if (!data || data.length === 0) {
-      const genesis = new Block(0, "Genesis Block", "0000000000000000");
+      const timestamp = await fetchTimestamp();
+      const genesis   = new Block(0, "Genesis Block", "0000000000000000", timestamp);
       await supabase.from("blocks").insert(genesis.toRow());
       return [genesis];
     }
@@ -37,54 +75,70 @@ class Blockchain {
   }
 
   async addNote(note) {
-    const chain = await this.loadChain();
-    const last  = chain[chain.length - 1];
-    const block = new Block(chain.length, note, last.hash);
+    const chain     = await this.loadChain();
+    const last      = chain[chain.length - 1];
+    const timestamp = await fetchTimestamp();
+    const block     = new Block(chain.length, note, last.hash, timestamp);
 
-    const { error } = await supabase.from("blocks").insert(block.toRow());
-    if (error) throw error;
+    if (await checkSupabase()) {
+      const { error } = await supabase.from("blocks").insert(block.toRow());
+      if (error) throw error;
+    } else {
+      (await getMemoryChain()).push(block);
+    }
 
     return block;
   }
 
-  // Changes note WITHOUT recalculating hash — makes it detectable
   async tamperBlock(index, newNote) {
     const chain = await this.loadChain();
     if (index <= 0 || index >= chain.length) return false;
 
-    const { error } = await supabase
-      .from("blocks")
-      .update({ note: newNote })
-      .eq("index", index);
+    if (await checkSupabase()) {
+      const { error } = await supabase
+        .from("blocks")
+        .update({ note: newNote })
+        .eq("index", index);
+      if (error) throw error;
+    } else {
+      (await getMemoryChain())[index].note = newNote;
+    }
 
-    if (error) throw error;
     return true;
   }
 
-  // Fixes the tampered block then cascades down to relink all blocks after it
   async restoreBlock(index) {
     const chain = await this.loadChain();
     if (index <= 0 || index >= chain.length) return false;
 
-    const target      = chain[index];
+    const target        = chain[index];
     target.previousHash = chain[index - 1].hash;
     target.hash         = target.calculateHash();
 
-    await supabase
-      .from("blocks")
-      .update({ previous_hash: target.previousHash, hash: target.hash })
-      .eq("index", index);
-
-    for (let i = index + 1; i < chain.length; i++) {
-      const current  = chain[i];
-      const previous = chain[i - 1];
-      current.previousHash = previous.hash;
-      current.hash         = current.calculateHash();
-
+    if (await checkSupabase()) {
       await supabase
         .from("blocks")
-        .update({ previous_hash: current.previousHash, hash: current.hash })
-        .eq("index", current.index);
+        .update({ previous_hash: target.previousHash, hash: target.hash })
+        .eq("index", index);
+
+      for (let i = index + 1; i < chain.length; i++) {
+        const current        = chain[i];
+        const previous       = chain[i - 1];
+        current.previousHash = previous.hash;
+        current.hash         = current.calculateHash();
+        await supabase
+          .from("blocks")
+          .update({ previous_hash: current.previousHash, hash: current.hash })
+          .eq("index", current.index);
+      }
+    } else {
+      const mem = await getMemoryChain();
+      mem[index] = target;
+      for (let i = index + 1; i < chain.length; i++) {
+        chain[i].previousHash = chain[i - 1].hash;
+        chain[i].hash         = chain[i].calculateHash();
+        mem[i] = chain[i];
+      }
     }
 
     return true;
@@ -104,7 +158,6 @@ class Blockchain {
     return true;
   }
 
-  // Returns full chain with status attached to each block
   async getChainWithStatus() {
     const chain = await this.loadChain();
     return chain.map((block, i) => ({
